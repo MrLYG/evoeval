@@ -30,7 +30,7 @@ Whenever `samples.jsonl` is rewritten, the runner deletes `samples_eval_results.
 ## Reproduce
 
 ```bash
-git clone -b harbor-parity https://github.com/<fork-owner>/evoeval && cd evoeval
+git clone -b harbor-parity https://github.com/MrLYG/evoeval && cd evoeval
 uv venv --python 3.10.22 .venv
 uv pip install --python .venv/bin/python -e . -r harbor_parity/requirements.txt
 
