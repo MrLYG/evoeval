@@ -163,15 +163,37 @@ async def sh(sandbox, command: str, *, env: dict[str, str] | None = None,
         if deadline is not None and time.monotonic() > deadline:
             # Deleting the session kills its processes, so nothing keeps writing
             # after the cutoff (e.g. the agent writing /workspace/solution.py).
-            try:
-                await sandbox.process.delete_session(session_id)
-            except Exception:
-                pass
+            # If that cannot be done or confirmed, the attempt is an
+            # infrastructure error (re-run), never a scored submission.
+            await sandbox.process.delete_session(session_id)
             await asyncio.sleep(2)
+            await ensure_agent_stopped(sandbox)
             return None, "", f"timed out after {timeout}s"
         await asyncio.sleep(1)
     logs = await sandbox.process.get_session_command_logs(session_id, resp.cmd_id)
     return int(cmd.exit_code), logs.stdout or "", logs.stderr or ""
+
+
+AGENT_ALIVE_CHECK = (
+    "for p in /proc/[0-9]*; do "
+    "if tr '\\0' ' ' < $p/cmdline 2>/dev/null | grep -q 'mini-swe-agen[t]'; then echo alive; fi; "
+    "done"
+)
+
+
+async def ensure_agent_stopped(sandbox) -> None:
+    """Raise unless no mini-swe-agent process is left in the sandbox."""
+    for attempt in range(5):
+        code, out, _ = await sh(sandbox, AGENT_ALIVE_CHECK, cwd=None, timeout=60)
+        if code == 0 and "alive" not in out:
+            return
+        if code == 0:
+            await sh(sandbox,
+                     "for p in /proc/[0-9]*; do tr '\\0' ' ' < $p/cmdline 2>/dev/null | "
+                     "grep -q 'mini-swe-agen[t]' && kill -9 ${p#/proc/} 2>/dev/null; done; true",
+                     cwd=None, timeout=60)
+        await asyncio.sleep(2)
+    raise RuntimeError("timed-out agent could not be confirmed stopped")
 
 
 async def file_exists(sandbox, path: str) -> bool:
