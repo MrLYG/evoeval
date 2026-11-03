@@ -1,6 +1,16 @@
 # Changes to upstream files
 
-The base is upstream `evo-eval/evoeval` at `d5ca310`. Its evaluation code is identical to `evoeval==0.1.0`. Besides adding `harbor_parity/`, this branch changes exactly one upstream file, as a scoring bugfix. The Harbor adapter applies the same fix.
+The base is upstream `evo-eval/evoeval` at `d5ca310`. Its evaluation code is identical to `evoeval==0.1.0`. Besides adding `harbor_parity/`, this branch changes two upstream files:
+- `evoeval/eval_test/__init__.py`: one scoring bugfix, which the Harbor adapter applies as well;
+- `README.md`: a note at the top that points to `harbor_parity/`.
+
+The complete diff outside `harbor_parity/` is `git diff d5ca310 HEAD -- . ':!harbor_parity'`. Its stat is:
+
+```
+ README.md                     | 2 ++
+ evoeval/eval_test/__init__.py | 5 +++++
+ 2 files changed, 7 insertions(+)
+```
 
 ## `evoeval/eval_test/__init__.py`: float values must have the same number of elements
 
@@ -28,3 +38,7 @@ index d19a3b0..e84a594 100644
              return True, None
          else:
 ```
+
+## `README.md`: note at the top
+
+Two lines are added before the upstream title: a one-paragraph note that this branch adds `harbor_parity/`, the original-side runner for the Harbor adapter's parity experiment, and an empty line. The rest of the README is unchanged.

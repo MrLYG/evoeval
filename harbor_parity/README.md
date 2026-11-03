@@ -16,11 +16,12 @@ For each problem of the dataset (default `EvoEval_difficult`, all 100), the runn
    - the environment variables: `OPENAI_API_KEY`, `OPENAI_BASE_URL`, `OPENAI_API_BASE`, `MSWEA_CONFIGURED`, `MSWEA_COST_TRACKING`
    - the working directory, `/workspace`
    - the agent timeout, 1800 s
+   - the network policy: like the Harbor task (`[agent] network_mode = "no-network"`), the agent has no network while it runs, except the hosts given with `--allow-agent-host` (its model API). Harbor and this runner apply it the same way, with Daytona's domain allowlist after the agent install, and restore it after the agent stops. The install step keeps network access. The EvoEval data, including canonical solutions and test inputs, is public, so an agent with open network could download it.
 4. **Collects the result.** It downloads `/workspace/solution.py` and the agent logs, then deletes the sandbox.
 
 It writes `samples.jsonl` with one `{"task_id", "solution"}` line per problem. The `solution` is the file content as written, or an empty string if the agent wrote nothing.
 
-Infrastructure errors are not scored and stay pending until a `--resume` run completes them. These are: a failed sandbox start, a failed agent install, and a failed check or download of `/workspace/solution.py`. A file that is missing after the agent finished is the agent's result, and it is scored as an empty solution.
+Infrastructure errors are not scored and stay pending until a `--resume` run completes them. These are: a failed sandbox start, a failed agent install, a failed network-policy change, and a failed check or download of `/workspace/solution.py`. A file that is missing after the agent finished is the agent's result, and it is scored as an empty solution.
 
 When the agent timeout (1800 s) expires, the runner deletes the command's Daytona session. This kills the agent before `/workspace/solution.py` is collected. A run directory can be resumed only with `--resume`, identical settings and the same task selection; otherwise use a new `--run-dir`.
 
@@ -37,7 +38,8 @@ uv pip install --python .venv/bin/python -e . -r harbor_parity/requirements.txt
 RUN=harbor_parity/runs/run1
 .venv/bin/python harbor_parity/run_agent.py --run-dir $RUN --env-file /path/to/keys.env \
     --model openai/deepseek-v4.1-flash --agent-version 2.4.6 --n-concurrent 6 \
-    --agent-env UV_EXCLUDE_NEWER=2026-10-17T00:00:00Z
+    --agent-env UV_EXCLUDE_NEWER=2026-10-17T00:00:00Z \
+    --allow-agent-host <host of OPENAI_BASE_URL>
 
 # score with this fork's evoeval.evaluate (upstream plus the float fix; all 100 problems)
 OPENBLAS_NUM_THREADS=1 .venv/bin/python -m evoeval.evaluate \

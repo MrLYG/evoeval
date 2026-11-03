@@ -11,18 +11,21 @@ the same agent must run on both sides. This script does, for every problem:
    task environment: python:3.10.22-slim + numpy 2.2.6), 2 CPUs / 4 GB / 10 GB;
 3. install and run mini-swe-agent exactly as Harbor's ``mini-swe-agent`` agent
    does (same install command, same CLI flags, same environment variables,
-   working directory /workspace, same agent timeout);
+   working directory /workspace, same agent timeout). Like the Harbor task
+   (``[agent] network_mode = "no-network"``), the agent has no network while it
+   runs, except the hosts given with ``--allow-agent-host`` (its model API);
+   the install step keeps network access;
 4. download ``/workspace/solution.py`` and the agent logs, delete the sandbox.
 
 It writes ``<run-dir>/samples.jsonl`` with one ``{"task_id", "solution"}`` line
 per EvoEval problem (the file content as the ``solution``; an empty string if
 the agent wrote no file, or for problems outside ``--task-ids``). Score it with
-the unmodified upstream evaluator::
+this fork's evaluator (upstream plus the documented float fix)::
 
     OPENBLAS_NUM_THREADS=1 evoeval.evaluate --dataset EvoEval_difficult \
         --samples <run-dir>/samples.jsonl --parallel 8
 
-Infrastructure failures (sandbox or install errors) are recorded in
+Infrastructure failures (sandbox, install or network-policy errors) are recorded in
 ``<run-dir>/tasks/<id>/meta.json`` with ``"infra_error"`` and are NOT written
 to samples.jsonl until they are re-run (``--resume`` re-runs only problems
 without a completed attempt).
@@ -32,6 +35,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import ipaddress
 import json
 import os
 import shlex
@@ -196,6 +200,43 @@ async def ensure_agent_stopped(sandbox) -> None:
     raise RuntimeError("timed-out agent could not be confirmed stopped")
 
 
+def agent_network_kwargs(hosts: list[str]) -> dict:
+    """Daytona network settings for the agent phase, as Harbor 0.23.0 applies them.
+
+    The task sets ``[agent] network_mode = "no-network"``; ``--allow-agent-host``
+    turns that into an allowlist of those hosts only
+    (``merge_extra_allowlists`` and ``DaytonaEnvironment._network_kwargs`` with
+    ``clear_public_allowlist=True``).
+    """
+    if not hosts:
+        return {"network_block_all": True}
+    domains, cidrs = [], []
+    for h in hosts:
+        try:
+            cidrs.append(str(ipaddress.ip_network(h, strict=False)))
+        except ValueError:
+            domains.append(h)
+    if domains:
+        return {"network_block_all": False, "domain_allow_list": ",".join(domains), "network_allow_list": ""}
+    return {"network_block_all": False, "network_allow_list": ",".join(cidrs), "domain_allow_list": ""}
+
+
+# Harbor restores the environment baseline (public) after the agent phase.
+PUBLIC_NETWORK = {"network_block_all": False, "domain_allow_list": "", "network_allow_list": ""}
+
+
+async def set_network(sandbox, kwargs: dict) -> None:
+    """harbor DaytonaEnvironment._apply_network_policy: 3 attempts, exponential wait."""
+    for attempt in range(3):
+        try:
+            await sandbox.update_network_settings(**kwargs)
+            return
+        except Exception:
+            if attempt == 2:
+                raise
+            await asyncio.sleep(min(10, 2 ** attempt))
+
+
 async def file_exists(sandbox, path: str) -> bool:
     """True/False from ``test -f``; raises if the check itself cannot run."""
     for attempt in range(3):
@@ -274,7 +315,11 @@ async def run_one(daytona, problem: dict, args, env_vars: dict[str, str], out_di
             )
             meta["litellm_version"] = out.strip()
 
-            # ---- agent run ----
+            # ---- agent run, with the agent-phase network policy ----
+            # A failure to apply it is an infrastructure error: the agent never
+            # runs with open network.
+            await set_network(sandbox, agent_network_kwargs(args.allow_agent_host))
+            meta["agent_network"] = "allowlist" if args.allow_agent_host else "no-network"
             run_env = {
                 **agent_env,
                 **env_vars,
@@ -291,6 +336,7 @@ async def run_one(daytona, problem: dict, args, env_vars: dict[str, str], out_di
             meta["agent_seconds"] = round(time.time() - t1, 1)
             meta["agent_exit_code"] = code
             meta["agent_timed_out"] = code is None
+            await set_network(sandbox, PUBLIC_NETWORK)
 
             # ---- collect ----
             # A missing file is the agent's result (empty solution); a failed
@@ -351,7 +397,7 @@ def write_samples(problems: dict, out_dir: Path) -> tuple[int, list[str]]:
 
 IMMUTABLE_SETTINGS = (
     "dataset", "model", "agent_version", "max_tokens", "agent_timeout", "setup_timeout",
-    "build_timeout", "cpus", "memory_gb", "disk_gb",
+    "build_timeout", "cpus", "memory_gb", "disk_gb", "allow_agent_host",
 )
 
 
@@ -438,6 +484,9 @@ def main() -> int:
     p.add_argument("--agent-env", action="append", default=[], metavar="KEY=VALUE",
                    help="extra env for agent setup and run (harbor --ae), e.g. "
                         "UV_EXCLUDE_NEWER=2026-10-17T00:00:00Z")
+    p.add_argument("--allow-agent-host", action="append", default=[], metavar="HOST",
+                   help="host (or IPv4/CIDR) the agent may reach while it runs, e.g. its model API "
+                        "(harbor --allow-agent-host). The agent has no other network access.")
     args = p.parse_args()
     if args.run_name is None:
         args.run_name = Path(args.run_dir).name
