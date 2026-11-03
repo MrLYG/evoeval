@@ -39,6 +39,7 @@ RUN=harbor_parity/runs/run1
 .venv/bin/python harbor_parity/run_agent.py --run-dir $RUN --env-file /path/to/keys.env \
     --model openai/deepseek-v4.1-flash --agent-version 2.4.6 --n-concurrent 6 \
     --agent-env UV_EXCLUDE_NEWER=2026-10-17T00:00:00Z \
+    --agent-env LITELLM_LOCAL_MODEL_COST_MAP=True \
     --allow-agent-host <host of OPENAI_BASE_URL>
 
 # score with this fork's evoeval.evaluate (upstream plus the float fix; all 100 problems)
@@ -61,6 +62,10 @@ Harbor's mini-swe-agent installer leaves `litellm` unpinned. Since 2026-10-18 th
 - **This runner:** `--agent-env UV_EXCLUDE_NEWER=...`
 
 With this setting uv resolves `litellm==1.105.1`. The runner records the installed version in each task's `meta.json`.
+
+## litellm cost map
+
+With the agent's network restricted to its model API, litellm cannot download its model cost map from GitHub when it starts. The failed fetch is retried in a background thread, and the logging from that thread can crash litellm with a module-import deadlock. Both sides therefore also set `LITELLM_LOCAL_MODEL_COST_MAP=True` for the agent. With it, litellm uses the cost map bundled with the package. It affects only cost lookups, and cost tracking is off on both sides (`--cost-limit 0`, `MSWEA_COST_TRACKING=ignore_errors`).
 
 ## Evaluation settings
 
