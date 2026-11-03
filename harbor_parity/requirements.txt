@@ -1,0 +1,5 @@
+# Original-side parity runner for the Harbor evoeval-auto adapter.
+# evoeval itself: `pip install -e .` from this repository (v0.1.0 code).
+evalplus==0.2.0
+numpy==2.2.6
+daytona==0.227.3

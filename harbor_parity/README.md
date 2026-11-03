@@ -1,0 +1,58 @@
+# EvoEval: original-side parity runner for the Harbor adapter
+
+This directory reproduces the **original-benchmark side** of the parity experiment for the Harbor adapter `evoeval-auto`. The adapter lives at [harbor-framework/adapters](https://github.com/harbor-framework/adapters), in `src/evoeval-auto`.
+
+EvoEval's own harness asks a model once and scores the extracted function. Harbor runs agents, so both sides run the **same CLI agent**: `mini-swe-agent==2.4.6` with `openai/deepseek-v4.1-flash`. Each problem's answer is then scored with EvoEval's **unmodified** `evoeval.evaluate`. All other code in this fork is upstream EvoEval, unchanged.
+
+## What `run_agent.py` does
+
+For each problem of the dataset (default `EvoEval_difficult`, all 100), the runner does four things:
+
+1. **Renders the instruction.** It uses `instruction_template.md`, which is byte-identical to the Harbor task's `instruction.md`. The text is the EvoEval API-model prompt `Please complete the following code snippet.` plus one sentence saying to save the code to `/workspace/solution.py`.
+2. **Creates a Daytona sandbox.** It is built from `Dockerfile`, which is identical to the Harbor task environment: `python:3.10.22-slim`, `numpy==2.2.6`, curl, git and build-essential. The sandbox has 2 CPUs, 4 GB of RAM and 10 GB of disk.
+3. **Installs and runs mini-swe-agent the same way Harbor 0.23.0 does.** Everything matches:
+   - the install command: uv, Python 3.12, then `uv tool install mini-swe-agent==2.4.6 --with litellm --with orjson --with fastapi`
+   - the command line: `mini-swe-agent --yolo --model=... --task=<instruction> --output=... --cost-limit 0 -c mini -c model.model_kwargs.timeout=3600 -c model.model_kwargs.extra_headers.X-Session-ID=... --exit-immediately`
+   - the environment variables: `OPENAI_API_KEY`, `OPENAI_BASE_URL`, `OPENAI_API_BASE`, `MSWEA_CONFIGURED`, `MSWEA_COST_TRACKING`
+   - the working directory, `/workspace`
+   - the agent timeout, 1800 s
+4. **Collects the result.** It downloads `/workspace/solution.py` and the agent logs, then deletes the sandbox.
+
+It writes `samples.jsonl` with one `{"task_id", "solution"}` line per problem. The `solution` is the file content as written, or an empty string if the agent wrote nothing. Problems that hit an infrastructure error (sandbox or install failure) are not scored. Re-run them with `--resume`.
+
+## Reproduce
+
+```bash
+git clone -b harbor-parity https://github.com/<fork-owner>/evoeval && cd evoeval
+uv venv --python 3.10.22 .venv
+uv pip install --python .venv/bin/python -e . -r harbor_parity/requirements.txt
+
+# keys: OPENAI_API_KEY, OPENAI_BASE_URL (OpenAI-compatible endpoint), DAYTONA_API_KEY
+RUN=harbor_parity/runs/run1
+.venv/bin/python harbor_parity/run_agent.py --run-dir $RUN --env-file /path/to/keys.env \
+    --model openai/deepseek-v4.1-flash --agent-version 2.4.6 --n-concurrent 6 \
+    --agent-env UV_EXCLUDE_NEWER=2026-10-17T00:00:00Z
+
+# score with the unmodified upstream evaluator (all 100 problems)
+OPENBLAS_NUM_THREADS=1 .venv/bin/python -m evoeval.evaluate \
+    --dataset EvoEval_difficult --samples $RUN/samples.jsonl --parallel 8
+.venv/bin/python harbor_parity/summarize.py $RUN --out $RUN/result.json
+```
+
+For a sanity check on a few problems, pass `--task-ids EvoEval/0 EvoEval/1 ...`. `samples.jsonl` still lists all 100 problems, because `evoeval.evaluate` requires every problem; the unselected ones get empty solutions. `summarize.py` reports pass@1 over the selected problems only.
+
+## Agent install pin
+
+Harbor's mini-swe-agent installer leaves `litellm` unpinned. Since 2026-10-18 this resolves to the litellm 1.106 line, which fails every tool call with `No module named 'mcp'`. Both sides therefore set `UV_EXCLUDE_NEWER=2026-10-17T00:00:00Z` for the agent's setup and run commands:
+
+- **Harbor side:** `--ae UV_EXCLUDE_NEWER=...`
+- **This runner:** `--agent-env UV_EXCLUDE_NEWER=...`
+
+With this setting uv resolves `litellm==1.105.1`. The runner records the installed version in each task's `meta.json`.
+
+## Evaluation settings
+
+- **`OPENBLAS_NUM_THREADS=1`.** The Harbor verifier sets the same value. The upstream evaluator caps each candidate process at 4 GiB of virtual memory, and numpy's thread pool grows with the CPU count. On many-core hosts the pool alone can push a correct solution over the cap.
+- **`--parallel 8`.** This is an upstream flag. Its default is `cpu_count // 2` worker processes, which on a 112-core host would put a heavy load on a shared machine while time limits are being measured.
+- **Dependencies.** `evalplus==0.2.0`, the release current when EvoEval 0.1.0 was published, and `numpy==2.2.6`. A newer evalplus imports heavy libraries that count against the 4 GiB cap.
+- **No sanitizer.** The upstream `tool/sanitize.py` extracts a function from a raw chat reply. Agents write files, so the file is scored as written. The Harbor side does the same.
