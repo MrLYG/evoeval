@@ -51,14 +51,7 @@ For a sanity check on a few problems, pass `--task-ids EvoEval/0 EvoEval/1 ...`.
 
 ## Parity results
 
-All 100 `EvoEval_difficult` problems, 3 runs per side, run on 2026-11-03 with both sides running at the same time. Both sides requested `openai/deepseek-v4.1-flash`, and the endpoint served every response from the snapshot `deepseek-v4-1-flash-261017`.
-
-| Side | Run 1 | Run 2 | Run 3 | pass@1 (mean ± sample SEM) |
-|---|---|---|---|---|
-| Original (this runner + `evoeval.evaluate`) | 67.0 | 67.0 | 66.0 | 66.67 ± 0.3333 |
-| Harbor (`evoeval-auto`) | 65.0 | 65.0 | 66.0 | 65.33 ± 0.3333 |
-
-The run ranges overlap. No run had an infrastructure error. Unpatched upstream `evoeval==0.1.0` gives the same original-side scores (67.0, 67.0, 66.0). Each side's solutions were also scored with the other side's evaluator, and the two evaluators gave the same result for all 600 solutions.
+Pending: the parity runs with the agent-phase network policy.
 
 ## Agent install pin
 
