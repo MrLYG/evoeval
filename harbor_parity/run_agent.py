@@ -13,8 +13,9 @@ the same agent must run on both sides. This script does, for every problem:
    does (same install command, same CLI flags, same environment variables,
    working directory /workspace, same agent timeout). Like the Harbor task
    (``[agent] network_mode = "no-network"``), the agent has no network while it
-   runs, except the hosts given with ``--allow-agent-host`` (its model API);
-   the install step keeps network access;
+   runs, except the hosts given with ``--allow-agent-host`` (its model API),
+   and the restriction stays until the sandbox is deleted; the install step
+   keeps network access;
 4. download ``/workspace/solution.py`` and the agent logs, delete the sandbox.
 
 It writes ``<run-dir>/samples.jsonl`` with one ``{"task_id", "solution"}`` line
@@ -221,10 +222,6 @@ def agent_network_kwargs(hosts: list[str]) -> dict:
     return {"network_block_all": False, "network_allow_list": ",".join(cidrs), "domain_allow_list": ""}
 
 
-# Harbor restores the environment baseline (public) after the agent phase.
-PUBLIC_NETWORK = {"network_block_all": False, "domain_allow_list": "", "network_allow_list": ""}
-
-
 async def set_network(sandbox, kwargs: dict) -> None:
     """harbor DaytonaEnvironment._apply_network_policy: 3 attempts, exponential wait."""
     for attempt in range(3):
@@ -336,7 +333,10 @@ async def run_one(daytona, problem: dict, args, env_vars: dict[str, str], out_di
             meta["agent_seconds"] = round(time.time() - t1, 1)
             meta["agent_exit_code"] = code
             meta["agent_timed_out"] = code is None
-            await set_network(sandbox, PUBLIC_NETWORK)
+            # The network stays restricted until the sandbox is deleted: files are
+            # downloaded through the Daytona API, so a process the agent left running
+            # cannot fetch anything and change the answer before it is collected.
+            # (Harbor 0.23.0 restores the baseline network before it collects artifacts.)
 
             # ---- collect ----
             # A missing file is the agent's result (empty solution); a failed
