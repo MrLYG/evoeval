@@ -167,9 +167,32 @@ async def sh(sandbox, command: str, *, env: dict[str, str] | None = None,
     return int(cmd.exit_code), logs.stdout or "", logs.stderr or ""
 
 
-async def download(sandbox, path: str) -> bytes | None:
+async def file_exists(sandbox, path: str) -> bool:
+    """True/False from ``test -f``; raises if the check itself cannot run."""
+    for attempt in range(3):
+        code, _, _ = await sh(sandbox, f"test -f {shlex.quote(path)}", cwd=None, timeout=60)
+        if code in (0, 1):
+            return code == 0
+        await asyncio.sleep(2 * (attempt + 1))
+    raise RuntimeError(f"could not check {path}")
+
+
+async def download(sandbox, path: str) -> bytes:
+    """Download a file that exists; transport errors are retried, then raised."""
+    last = None
+    for attempt in range(3):
+        try:
+            return await sandbox.fs.download_file(path)
+        except Exception as exc:  # transient transport error
+            last = exc
+            await asyncio.sleep(2 * (attempt + 1))
+    raise RuntimeError(f"download of {path} failed: {last}")
+
+
+async def download_log(sandbox, path: str) -> bytes | None:
+    """Best-effort download of an agent log (not part of the score)."""
     try:
-        return await sandbox.fs.download_file(path)
+        return await download(sandbox, path) if await file_exists(sandbox, path) else None
     except Exception:
         return None
 
@@ -241,12 +264,16 @@ async def run_one(daytona, problem: dict, args, env_vars: dict[str, str], out_di
             meta["agent_timed_out"] = code is None
 
             # ---- collect ----
-            sol = await download(sandbox, "/workspace/solution.py")
+            # A missing file is the agent's result (empty solution); a failed
+            # check or download is an infrastructure error (re-run with --resume).
+            sol = None
+            if await file_exists(sandbox, "/workspace/solution.py"):
+                sol = await download(sandbox, "/workspace/solution.py")
             meta["solution_found"] = sol is not None
             solution = sol.decode("utf-8", errors="replace") if sol is not None else ""
             (tdir / "solution.py").write_text(solution)
             for remote, local in ((TRAJ_PATH, "mini-swe-agent.trajectory.json"), (LOG_PATH, "mini-swe-agent.txt")):
-                data = await download(sandbox, remote)
+                data = await download_log(sandbox, remote)
                 if data is not None:
                     (tdir / local).write_bytes(data)
             meta["completed"] = True
@@ -269,7 +296,14 @@ async def run_one(daytona, problem: dict, args, env_vars: dict[str, str], out_di
 
 
 def write_samples(problems: dict, out_dir: Path) -> tuple[int, list[str]]:
-    """samples.jsonl over ALL problems (upstream evaluate requires every task)."""
+    """samples.jsonl over ALL problems (upstream evaluate requires every task).
+
+    evoeval.evaluate reuses an existing ``samples_eval_results.json`` without
+    checking the samples, so it is deleted whenever samples.jsonl is rewritten.
+    """
+    stale = out_dir / "samples_eval_results.json"
+    if stale.exists():
+        stale.unlink()
     done, pending = 0, []
     selected = selected_ids(out_dir)
     with open(out_dir / "samples.jsonl", "w") as f:

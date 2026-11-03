@@ -18,7 +18,11 @@ For each problem of the dataset (default `EvoEval_difficult`, all 100), the runn
    - the agent timeout, 1800 s
 4. **Collects the result.** It downloads `/workspace/solution.py` and the agent logs, then deletes the sandbox.
 
-It writes `samples.jsonl` with one `{"task_id", "solution"}` line per problem. The `solution` is the file content as written, or an empty string if the agent wrote nothing. Problems that hit an infrastructure error (sandbox or install failure) are not scored. Re-run them with `--resume`.
+It writes `samples.jsonl` with one `{"task_id", "solution"}` line per problem. The `solution` is the file content as written, or an empty string if the agent wrote nothing.
+
+Infrastructure errors are not scored and stay pending until a `--resume` run completes them. These are: a failed sandbox start, a failed agent install, and a failed check or download of `/workspace/solution.py`. A file that is missing after the agent finished is the agent's result, and it is scored as an empty solution.
+
+Whenever `samples.jsonl` is rewritten, the runner deletes `samples_eval_results.json`. `evoeval.evaluate` would otherwise reuse the old results. `summarize.py` refuses to report a score in two cases: when any selected problem has no completed attempt, and when the evaluated solutions differ from `samples.jsonl`.
 
 ## Reproduce
 
@@ -56,3 +60,20 @@ With this setting uv resolves `litellm==1.105.1`. The runner records the install
 - **`--parallel 8`.** This is an upstream flag. Its default is `cpu_count // 2` worker processes, which on a 112-core host would put a heavy load on a shared machine while time limits are being measured.
 - **Dependencies.** `evalplus==0.2.0`, the release current when EvoEval 0.1.0 was published, and `numpy==2.2.6`. A newer evalplus imports heavy libraries that count against the 4 GiB cap.
 - **No sanitizer.** The upstream `tool/sanitize.py` extracts a function from a raw chat reply. Agents write files, so the file is scored as written. The Harbor side does the same.
+
+## Changes from upstream
+
+The base is upstream `evo-eval/evoeval` at `d5ca310`. Its evaluation code is identical to the `evoeval==0.1.0` release. This branch only adds the `harbor_parity/` directory. No upstream file is modified, so the data loading, prompts, `evoeval.evaluate`, the oracles and the scoring are unchanged:
+
+```
+$ git diff --stat d5ca310 HEAD
+ harbor_parity/.gitignore              |   2 +
+ harbor_parity/Dockerfile              |  ..
+ harbor_parity/README.md               |  ..
+ harbor_parity/instruction_template.md |   ..
+ harbor_parity/requirements.txt        |   ..
+ harbor_parity/run_agent.py            | ...
+ harbor_parity/summarize.py            |  ..
+```
+
+Check it with `git diff --stat d5ca310 HEAD -- . ':!harbor_parity'`; the output is empty.
