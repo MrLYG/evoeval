@@ -66,14 +66,14 @@ With this setting uv resolves `litellm==1.105.1`. The runner records the install
 The base is upstream `evo-eval/evoeval` at `d5ca310`. Its evaluation code is identical to the `evoeval==0.1.0` release. This branch only adds the `harbor_parity/` directory. No upstream file is modified, so the data loading, prompts, `evoeval.evaluate`, the oracles and the scoring are unchanged:
 
 ```
-$ git diff --stat d5ca310 HEAD
- harbor_parity/.gitignore              |   2 +
- harbor_parity/Dockerfile              |  ..
- harbor_parity/README.md               |  ..
- harbor_parity/instruction_template.md |   ..
- harbor_parity/requirements.txt        |   ..
- harbor_parity/run_agent.py            | ...
- harbor_parity/summarize.py            |  ..
+$ git diff --name-status d5ca310 HEAD
+A       harbor_parity/.gitignore
+A       harbor_parity/Dockerfile
+A       harbor_parity/README.md
+A       harbor_parity/instruction_template.md
+A       harbor_parity/requirements.txt
+A       harbor_parity/run_agent.py
+A       harbor_parity/summarize.py
 ```
 
 Check it with `git diff --stat d5ca310 HEAD -- . ':!harbor_parity'`; the output is empty.
