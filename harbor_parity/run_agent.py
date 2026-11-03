@@ -161,6 +161,13 @@ async def sh(sandbox, command: str, *, env: dict[str, str] | None = None,
         if cmd.exit_code is not None:
             break
         if deadline is not None and time.monotonic() > deadline:
+            # Deleting the session kills its processes, so nothing keeps writing
+            # after the cutoff (e.g. the agent writing /workspace/solution.py).
+            try:
+                await sandbox.process.delete_session(session_id)
+            except Exception:
+                pass
+            await asyncio.sleep(2)
             return None, "", f"timed out after {timeout}s"
         await asyncio.sleep(1)
     logs = await sandbox.process.get_session_command_logs(session_id, resp.cmd_id)
@@ -320,6 +327,12 @@ def write_samples(problems: dict, out_dir: Path) -> tuple[int, list[str]]:
     return done, pending
 
 
+IMMUTABLE_SETTINGS = (
+    "dataset", "model", "agent_version", "max_tokens", "agent_timeout", "setup_timeout",
+    "build_timeout", "cpus", "memory_gb", "disk_gb",
+)
+
+
 def selected_ids(out_dir: Path) -> set[str]:
     p = out_dir / "selected_task_ids.json"
     return set(json.loads(p.read_text())) if p.exists() else set()
@@ -337,10 +350,21 @@ async def main_async(args) -> int:
     out_dir = Path(args.run_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     sel_p = out_dir / "selected_task_ids.json"
-    if not sel_p.exists():
+    cfg_p = out_dir / "run_config.json"
+    config = {k: getattr(args, k) for k in IMMUTABLE_SETTINGS}
+    config["agent_env"] = [list(kv) for kv in args.agent_env]
+    if sel_p.exists() or cfg_p.exists():
+        # An existing run directory may only be resumed with identical settings
+        # and the same task selection; otherwise use a new --run-dir.
+        old_ids = json.loads(sel_p.read_text()) if sel_p.exists() else None
+        old_cfg = json.loads(cfg_p.read_text()) if cfg_p.exists() else None
+        if not args.resume or old_ids != ids or old_cfg != config:
+            print(f"{out_dir} already holds a run with different settings or tasks "
+                  "(or --resume was not given); use a new --run-dir", file=sys.stderr)
+            return 2
+    else:
         sel_p.write_text(json.dumps(ids))
-    config = {k: v for k, v in vars(args).items() if k != "env_file"}
-    (out_dir / "run_config.json").write_text(json.dumps(config, indent=2))
+        cfg_p.write_text(json.dumps(config, indent=2))
 
     todo = []
     for t in ids:

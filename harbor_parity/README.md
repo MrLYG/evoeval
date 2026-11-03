@@ -22,6 +22,8 @@ It writes `samples.jsonl` with one `{"task_id", "solution"}` line per problem. T
 
 Infrastructure errors are not scored and stay pending until a `--resume` run completes them. These are: a failed sandbox start, a failed agent install, and a failed check or download of `/workspace/solution.py`. A file that is missing after the agent finished is the agent's result, and it is scored as an empty solution.
 
+When the agent timeout (1800 s) expires, the runner deletes the command's Daytona session. This kills the agent before `/workspace/solution.py` is collected. A run directory can be resumed only with `--resume`, identical settings and the same task selection; otherwise use a new `--run-dir`.
+
 Whenever `samples.jsonl` is rewritten, the runner deletes `samples_eval_results.json`. `evoeval.evaluate` would otherwise reuse the old results. `summarize.py` refuses to report a score in two cases: when any selected problem has no completed attempt, and when the evaluated solutions differ from `samples.jsonl`.
 
 ## Reproduce
@@ -63,17 +65,19 @@ With this setting uv resolves `litellm==1.105.1`. The runner records the install
 
 ## Changes from upstream
 
-The base is upstream `evo-eval/evoeval` at `d5ca310`. Its evaluation code is identical to the `evoeval==0.1.0` release. This branch only adds the `harbor_parity/` directory. No upstream file is modified, so the data loading, prompts, `evoeval.evaluate`, the oracles and the scoring are unchanged:
+The base is upstream `evo-eval/evoeval` at `d5ca310`. Its evaluation code is identical to the `evoeval==0.1.0` release. This branch adds the `harbor_parity/` directory and makes one documented scoring bugfix in `evoeval/eval_test/__init__.py`: float values must have the same number of elements. The exact patch is in `UPSTREAM_CHANGES.md`, and the Harbor adapter applies the same fix. Data loading, prompts, the rest of `evoeval.evaluate` and the oracles are unchanged:
 
 ```
 $ git diff --name-status d5ca310 HEAD
+M       evoeval/eval_test/__init__.py
 A       harbor_parity/.gitignore
 A       harbor_parity/Dockerfile
 A       harbor_parity/README.md
+A       harbor_parity/UPSTREAM_CHANGES.md
 A       harbor_parity/instruction_template.md
 A       harbor_parity/requirements.txt
 A       harbor_parity/run_agent.py
 A       harbor_parity/summarize.py
 ```
 
-Check it with `git diff --stat d5ca310 HEAD -- . ':!harbor_parity'`; the output is empty.
+Check it with `git diff d5ca310 HEAD -- . ':!harbor_parity'`; the output shows only the `is_equal` fix.

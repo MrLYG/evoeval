@@ -163,6 +163,11 @@ def is_equal(x, y) -> tuple[bool, str]:
             error_msg = "Value mismatch: too large for display"
         return False, error_msg
     elif x_type == DataType.Float:
+        # harbor-parity bugfix: np.allclose broadcasts, so an empty or shorter
+        # float list/array "matched" any float answer (e.g. np.empty((0, 1))).
+        # Float values must also have the same number of elements.
+        if np.size(x) != np.size(y):
+            return False, "FLOAT size mismatch: {} vs {}".format(np.size(x), np.size(y))
         if np.allclose(x, y, equal_nan=True, atol=1e-6):  # guard against nan
             return True, None
         else:
