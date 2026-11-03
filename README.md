@@ -1,3 +1,5 @@
+> **Branch `harbor-parity`.** This fork adds [`harbor_parity/`](harbor_parity/README.md), the original-side runner for the parity experiment of the Harbor adapter `evoeval-auto`. It runs `mini-swe-agent` on EvoEval problems in Daytona sandboxes and scores the answers with `evoeval.evaluate`. It also makes one documented evaluator bugfix ([`harbor_parity/UPSTREAM_CHANGES.md`](harbor_parity/UPSTREAM_CHANGES.md)). The rest of this README is upstream EvoEval's.
+
 # <img src="resources/butterfly_dark.png" width="32px" height="auto"> EvoEval: Evolving Coding Benchmarks via LLM
 
 <p align="center">

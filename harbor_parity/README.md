@@ -2,7 +2,7 @@
 
 This directory reproduces the **original-benchmark side** of the parity experiment for the Harbor adapter `evoeval-auto`. The adapter lives at [harbor-framework/adapters](https://github.com/harbor-framework/adapters), in `src/evoeval-auto`.
 
-EvoEval's own harness asks a model once and scores the extracted function. Harbor runs agents, so both sides run the **same CLI agent**: `mini-swe-agent==2.4.6` with `openai/deepseek-v4.1-flash`. Each problem's answer is then scored with EvoEval's **unmodified** `evoeval.evaluate`. All other code in this fork is upstream EvoEval, unchanged.
+EvoEval's own harness asks a model once and scores the extracted function. Harbor runs agents, so both sides run the **same CLI agent**: `mini-swe-agent==2.4.6` with `openai/deepseek-v4.1-flash`. Each problem's answer is then scored with EvoEval's `evoeval.evaluate`, which here has one documented bugfix (see [Changes from upstream](#changes-from-upstream)). All other code in this fork is upstream EvoEval, unchanged.
 
 ## What `run_agent.py` does
 
@@ -39,13 +39,24 @@ RUN=harbor_parity/runs/run1
     --model openai/deepseek-v4.1-flash --agent-version 2.4.6 --n-concurrent 6 \
     --agent-env UV_EXCLUDE_NEWER=2026-10-17T00:00:00Z
 
-# score with the unmodified upstream evaluator (all 100 problems)
+# score with this fork's evoeval.evaluate (upstream plus the float fix; all 100 problems)
 OPENBLAS_NUM_THREADS=1 .venv/bin/python -m evoeval.evaluate \
     --dataset EvoEval_difficult --samples $RUN/samples.jsonl --parallel 8
 .venv/bin/python harbor_parity/summarize.py $RUN --out $RUN/result.json
 ```
 
 For a sanity check on a few problems, pass `--task-ids EvoEval/0 EvoEval/1 ...`. `samples.jsonl` still lists all 100 problems, because `evoeval.evaluate` requires every problem; the unselected ones get empty solutions. `summarize.py` reports pass@1 over the selected problems only.
+
+## Parity results
+
+All 100 `EvoEval_difficult` problems, 3 runs per side, run on 2026-11-03 with both sides running at the same time. Both sides requested `openai/deepseek-v4.1-flash`, and the endpoint served every response from the snapshot `deepseek-v4-1-flash-261017`.
+
+| Side | Run 1 | Run 2 | Run 3 | pass@1 (mean ± sample SEM) |
+|---|---|---|---|---|
+| Original (this runner + `evoeval.evaluate`) | 67.0 | 67.0 | 66.0 | 66.67 ± 0.3333 |
+| Harbor (`evoeval-auto`) | 65.0 | 65.0 | 66.0 | 65.33 ± 0.3333 |
+
+The run ranges overlap. No run had an infrastructure error. Unpatched upstream `evoeval==0.1.0` gives the same original-side scores (67.0, 67.0, 66.0). Each side's solutions were also scored with the other side's evaluator, and the two evaluators gave the same result for all 600 solutions.
 
 ## Agent install pin
 
@@ -65,10 +76,11 @@ With this setting uv resolves `litellm==1.105.1`. The runner records the install
 
 ## Changes from upstream
 
-The base is upstream `evo-eval/evoeval` at `d5ca310`. Its evaluation code is identical to the `evoeval==0.1.0` release. This branch adds the `harbor_parity/` directory and makes one documented scoring bugfix in `evoeval/eval_test/__init__.py`: float values must have the same number of elements. The exact patch is in `UPSTREAM_CHANGES.md`, and the Harbor adapter applies the same fix. Data loading, prompts, the rest of `evoeval.evaluate` and the oracles are unchanged:
+The base is upstream `evo-eval/evoeval` at `d5ca310`. Its evaluation code is identical to the `evoeval==0.1.0` release. This branch adds the `harbor_parity/` directory, a short note at the top of `README.md`, and one documented scoring bugfix in `evoeval/eval_test/__init__.py`: float values must have the same number of elements. The exact patch is in `UPSTREAM_CHANGES.md`, and the Harbor adapter applies the same fix. Data loading, prompts, the rest of `evoeval.evaluate` and the oracles are unchanged:
 
 ```
 $ git diff --name-status d5ca310 HEAD
+M       README.md
 M       evoeval/eval_test/__init__.py
 A       harbor_parity/.gitignore
 A       harbor_parity/Dockerfile
@@ -80,4 +92,4 @@ A       harbor_parity/run_agent.py
 A       harbor_parity/summarize.py
 ```
 
-Check it with `git diff d5ca310 HEAD -- . ':!harbor_parity'`; the output shows only the `is_equal` fix.
+Check it with `git diff d5ca310 HEAD -- . ':!harbor_parity'`; the output shows only the `README.md` note and the `is_equal` fix.
