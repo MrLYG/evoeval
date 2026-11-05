@@ -295,7 +295,7 @@ export OPENAI_API_KEY=... OPENAI_BASE_URL=...   # OpenAI-compatible endpoint ser
 
 ```bash
 GEN_PY=$PWD/.venv-gen/bin/python EVAL_PY=$PWD/.venv-eval/bin/python \
-  harbor_parity/run_original_parity.sh runs/run1 25
+  harbor_parity/run_original_parity.sh runs/run1 15   # 15 parallel requests, as in the experiment
 cat runs/run1/summary.json     # pass@1 and per-task status
 ```
 
