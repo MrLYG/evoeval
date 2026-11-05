@@ -6,18 +6,60 @@ from warnings import warn
 # Communism
 os.environ["HF_HOME"] = os.environ.get("HF_HOME", "/ColossalTitan/huggingface/")
 
-import anthropic
-import google.generativeai as genai
 import openai
-import torch
-from transformers import (
-    AutoModelForCausalLM,
-    AutoModelForSeq2SeqLM,
-    AutoTokenizer,
-    StoppingCriteria,
-    StoppingCriteriaList,
-)
-from vllm import LLM, SamplingParams
+
+
+class _MissingDependency:
+    """Harbor parity: stand-in for an optional local-model dependency.
+
+    API-only runs (OpenAIChatDecoder) do not need torch / transformers / vllm /
+    anthropic / google-generativeai. The stand-in lets this module import without
+    them; any real use raises ImportError.
+    """
+
+    def __init__(self, name):
+        self._name = name
+
+    def __getattr__(self, attr):
+        return _MissingDependency(f"{self._name}.{attr}")
+
+    def __call__(self, *args, **kwargs):
+        if not args and not kwargs:
+            return self  # e.g. `@torch.inference_mode()`
+        if len(args) == 1 and callable(args[0]) and not kwargs:
+            return args[0]  # used as a decorator
+        raise ImportError(f"{self._name} is required for this model")
+
+
+try:
+    import anthropic
+except ImportError:
+    anthropic = _MissingDependency("anthropic")
+try:
+    import google.generativeai as genai
+except ImportError:
+    genai = _MissingDependency("google.generativeai")
+try:
+    import torch
+    from transformers import (
+        AutoModelForCausalLM,
+        AutoModelForSeq2SeqLM,
+        AutoTokenizer,
+        StoppingCriteria,
+        StoppingCriteriaList,
+    )
+except ImportError:
+    torch = _MissingDependency("torch")
+    AutoModelForCausalLM = _MissingDependency("transformers.AutoModelForCausalLM")
+    AutoModelForSeq2SeqLM = _MissingDependency("transformers.AutoModelForSeq2SeqLM")
+    AutoTokenizer = _MissingDependency("transformers.AutoTokenizer")
+    StoppingCriteria = object
+    StoppingCriteriaList = _MissingDependency("transformers.StoppingCriteriaList")
+try:
+    from vllm import LLM, SamplingParams
+except ImportError:
+    LLM = _MissingDependency("vllm.LLM")
+    SamplingParams = _MissingDependency("vllm.SamplingParams")
 
 from evoeval.util.api_request import (
     create_anthropic_config,
@@ -953,6 +995,19 @@ def make_model(name: str, batch_size: int = 1, temperature: float = 0.8):
             temperature=temperature,
             model_name="models/text-bison-001",
             conversational=True,
+        )
+    elif name == "deepseek-v4.1-flash":
+        # Harbor parity model, served through an OpenAI-compatible endpoint
+        # (OPENAI_BASE_URL / OPENAI_API_KEY). It is a reasoning model: reasoning
+        # tokens count toward max_tokens, so the default 512 new tokens end before
+        # the answer. EVOEVAL_MAX_NEW_TOKENS sets the budget (default 32768).
+        return OpenAIChatDecoder(
+            batch_size=batch_size,
+            name=name,
+            temperature=temperature,
+            model_name=name,
+            conversational=True,
+            max_new_tokens=int(os.environ.get("EVOEVAL_MAX_NEW_TOKENS", "32768")),
         )
     elif name == "chatgpt":
         return OpenAIChatDecoder(

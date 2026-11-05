@@ -1,13 +1,22 @@
+import os
 import signal
 import time
 from typing import Dict, Union
 
 import openai
 import tiktoken
-from google.generativeai import GenerationConfig
-from google.generativeai.types.safety_types import HarmBlockThreshold, HarmCategory
+
+try:
+    from google.generativeai import GenerationConfig
+    from google.generativeai.types.safety_types import HarmBlockThreshold, HarmCategory
+except ImportError:  # Harbor parity: OpenAI-compatible runs do not need Google deps
+    GenerationConfig = HarmBlockThreshold = HarmCategory = None
 
 client = openai.OpenAI()
+
+# Harbor parity: per-request time limit (seconds) in request_chatgpt_engine.
+# The default (100) is the original value; reasoning models can need longer.
+CHATGPT_REQUEST_TIMEOUT = int(os.environ.get("EVOEVAL_REQUEST_TIMEOUT", "100"))
 
 
 def num_tokens_from_messages(message, model="gpt-3.5-turbo-0301"):
@@ -64,7 +73,7 @@ def request_chatgpt_engine(config):
     while ret is None:
         try:
             signal.signal(signal.SIGALRM, handler)
-            signal.alarm(100)
+            signal.alarm(CHATGPT_REQUEST_TIMEOUT)
             ret = client.chat.completions.create(**config)
             signal.alarm(0)
         except openai._exceptions.BadRequestError as e:
