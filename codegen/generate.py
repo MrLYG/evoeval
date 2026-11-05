@@ -83,10 +83,15 @@ def code_generate(args, workdir: PathLike, model: DecoderBase, id_range=None):
             p.console.print(log)
 
             sidx = args.n_samples - nsamples
+            prompt = task["prompt"]
+            if os.environ.get("EVOEVAL_PROMPT_LF") == "1":
+                # Harbor parity: Harbor agents read the prompt from a text file and get
+                # LF line endings; send the same text here (some prompts use CRLF).
+                prompt = prompt.replace("\r\n", "\n")
             while sidx < args.n_samples:
                 outputs = model.codegen(
                     construct_contract_prompt(
-                        task["prompt"], args.use_contracts, task["contract"]
+                        prompt, args.use_contracts, task["contract"]
                     ),
                     do_sample=not args.greedy,
                     num_samples=args.n_samples - sidx,

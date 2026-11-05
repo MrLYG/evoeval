@@ -276,5 +276,49 @@ LLM generation for each of our 7 benchmarks + the original HumanEval problems. N
 * [HumanEval](https://github.com/openai/human-eval)
 * We especially thank [EvalPlus](https://github.com/evalplus/evalplus)
 
+## Harbor parity (this branch)
 
+This branch (`harbor-parity-autoadapter`, based on `evo-eval/evoeval@d5ca310`) runs the original EvoEval pipeline for the parity experiment of the Harbor adapter `evoeval-autoadapter`. See all changes with `git diff d5ca310..harbor-parity-autoadapter`.
 
+**Setup.** Generation uses Python 3.12 (same `openai` SDK as the Harbor side); evaluation uses Python 3.9, as EvoEval's evaluation image.
+
+```bash
+git clone -b harbor-parity-autoadapter https://github.com/MrLYG/evoeval.git && cd evoeval
+uv venv .venv-gen --python 3.12
+VIRTUAL_ENV=$PWD/.venv-gen uv pip install openai==3.46.0 tiktoken==0.14.0 rich==15.0.0 evalplus==0.2.0 .
+uv venv .venv-eval --python 3.9
+VIRTUAL_ENV=$PWD/.venv-eval uv pip install evalplus==0.2.0 numpy==2.0.2 .
+export OPENAI_API_KEY=... OPENAI_BASE_URL=...   # OpenAI-compatible endpoint serving deepseek-v4.1-flash
+```
+
+**Run** (one run; use a new directory for each run):
+
+```bash
+GEN_PY=$PWD/.venv-gen/bin/python EVAL_PY=$PWD/.venv-eval/bin/python \
+  harbor_parity/run_original_parity.sh runs/run1 25
+cat runs/run1/summary.json     # pass@1 and per-task status
+```
+
+`run_original_parity.sh` calls, unchanged: `codegen/generate.py --model deepseek-v4.1-flash --bs 1 --temperature 0 --n_samples 1 --greedy` (in parallel over `--id-range` chunks), `tool/sanitize.py --eof`, and `python -m evoeval.evaluate`. `TASK_IDS="5 33 ..."` runs a subset through EvoEval's `EVOEVAL_OVERRIDE_PATH`.
+
+**Settings used for parity** (same values on the Harbor side, agent `evoeval-codegen@1.0.0`):
+
+| Setting | Value |
+|---|---|
+| Model | `deepseek-v4.1-flash` (served as `deepseek-v4-1-flash-261017`) |
+| Prompt | original `OpenAIChatDecoder` prompt, system "You are a helpful assistant." |
+| Decoding | `temperature=0`, `n=1`, greedy |
+| `max_tokens` | prompt tokens + 32768 (`EVOEVAL_MAX_NEW_TOKENS`; original 512) |
+| Per-request time limit | 900 s (`EVOEVAL_REQUEST_TIMEOUT`; original 100 s) |
+| Prompt line endings | LF (`EVOEVAL_PROMPT_LF=1`) |
+| Post-processing | `tool/sanitize.py --eof` |
+| Grading | `evoeval.evaluate` defaults (`--min-time-limit 1`, `--gt-time-limit-factor 4.0`), evalplus 0.2.0 |
+
+**Changes in this branch** (none touches the prompt text, the sanitizer or the grading):
+
+- `codegen/model.py`: optional imports of torch / transformers / vllm / anthropic / google-generativeai, so the API path runs without them; a `deepseek-v4.1-flash` entry that uses `OpenAIChatDecoder` with `EVOEVAL_MAX_NEW_TOKENS` (default 32768). The model is a reasoning model; with 512 new tokens most replies end before any answer.
+- `evoeval/util/api_request.py`: optional Google imports; the per-request alarm reads `EVOEVAL_REQUEST_TIMEOUT` (default 100, as before). Long reasoning requests exceed 100 s and would be retried forever.
+- `codegen/generate.py`: with `EVOEVAL_PROMPT_LF=1`, CRLF line endings in the prompt (10 of the 100 `EvoEval_difficult` prompts) are sent as LF, as Harbor agents receive them. Off by default.
+- `harbor_parity/run_original_parity.sh`, `harbor_parity/summarize.py`: the runner and the per-run summary.
+
+Without these environment variables, the existing models and the pipeline behave exactly as upstream.

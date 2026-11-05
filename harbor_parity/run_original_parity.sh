@@ -19,9 +19,17 @@
 #   GEN_PY                   python used for generation/sanitize (default: python)
 #   EVAL_PY                  python used for evaluation (default: python; Python 3.9 in parity)
 #   EVAL_PARALLEL            evaluate.py --parallel (default 8)
+#   TASK_IDS                 optional space-separated problem numbers (e.g. "3 17 42") for a
+#                            sanity run; uses EvoEval's EVOEVAL_OVERRIDE_PATH with a subset file
+#   EVOEVAL_PROMPT_LF        default 1: send prompts with LF line endings, as Harbor agents get them
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+if [ -e "$1" ] && [ -n "$(ls -A "$1" 2>/dev/null)" ]; then
+  # evaluate.py would load an existing eval_results.json instead of grading new samples.
+  echo "error: run directory $1 already exists and is not empty; use a new one" >&2
+  exit 1
+fi
 RUN_DIR="$(mkdir -p "$1" && cd "$1" && pwd)"
 NPAR="${2:-10}"
 MODEL="${MODEL:-deepseek-v4.1-flash}"
@@ -31,16 +39,37 @@ EVAL_PY="${EVAL_PY:-python}"
 EVAL_PARALLEL="${EVAL_PARALLEL:-8}"
 export EVOEVAL_MAX_NEW_TOKENS="${EVOEVAL_MAX_NEW_TOKENS:-32768}"
 export EVOEVAL_REQUEST_TIMEOUT="${EVOEVAL_REQUEST_TIMEOUT:-900}"
+export EVOEVAL_PROMPT_LF="${EVOEVAL_PROMPT_LF:-1}"
 export PYTHONPATH="$REPO${PYTHONPATH:+:$PYTHONPATH}"
 
+if [ -n "${TASK_IDS:-}" ]; then
+  mkdir -p "$RUN_DIR/data"
+  "$GEN_PY" - "$DATASET" "$RUN_DIR/data/$DATASET.jsonl" $TASK_IDS <<'PY'
+import json, sys
+from evoeval.data import get_evo_eval
+dataset, out, ids = sys.argv[1], sys.argv[2], {f"EvoEval/{int(i)}" for i in sys.argv[3:]}
+with open(out, "w") as f:
+    for task_id, problem in get_evo_eval(dataset).items():
+        if task_id in ids:
+            f.write(json.dumps(problem) + "\n")
+PY
+  export EVOEVAL_OVERRIDE_PATH="$RUN_DIR/data"
+fi
+
 # Problem ids are "EvoEval/<n>"; generate.py --id-range takes [low, high).
-N_PROBLEMS="$("$GEN_PY" -c "from evoeval.data import get_evo_eval; print(len(get_evo_eval('$DATASET')))")"
-CHUNK=$(( (N_PROBLEMS + NPAR - 1) / NPAR ))
+# Split the sorted ids into NPAR contiguous chunks, one generate.py process each.
+mapfile -t RANGES < <("$GEN_PY" -c "
+from evoeval.data import get_evo_eval
+ids = sorted(int(t.split('/')[1]) for t in get_evo_eval('$DATASET'))
+n = max(1, min($NPAR, len(ids))); k = -(-len(ids) // n)
+for c in [ids[i:i + k] for i in range(0, len(ids), k)]:
+    print(c[0], c[-1] + 1)
+")
 
 START=$(date +%s)
 pids=()
-for ((low = 0; low < N_PROBLEMS; low += CHUNK)); do
-  high=$(( low + CHUNK ))
+for r in "${RANGES[@]}"; do
+  read -r low high <<< "$r"
   (cd "$REPO/codegen" && "$GEN_PY" generate.py \
       --model "$MODEL" --bs 1 --temperature 0 --n_samples 1 --greedy \
       --dataset "$DATASET" --root "$RUN_DIR" --id-range "$low" "$high" \
